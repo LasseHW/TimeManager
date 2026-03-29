@@ -4,10 +4,8 @@ import {
   Easing,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
@@ -15,49 +13,34 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTimer } from '../../hooks/useTimer';
 import { useTodayEntries, type TodayEntry } from '../../hooks/useTodayEntries';
 import { useTasks } from '../../hooks/useTasks';
+import { useFolders } from '../../hooks/useFolders';
 import { useProjects, type Project } from '../../contexts/ProjectsContext';
+import { useProjectEntries, type ProjectEntry } from '../../hooks/useProjectEntries';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
-import { Sidebar, SIDEBAR_WIDTH } from '../../components/Sidebar';
-import { ActivityCard } from '../../components/ActivityCard';
-import { ManualEntryModal } from '../../components/ManualEntryModal';
+import { FolderPanel } from '../../components/FolderPanel';
+import { ProjectPanel } from '../../components/ProjectPanel';
+import { TaskPanel } from '../../components/TaskPanel';
+import { TimeEntryEditModal } from '../../components/TimeEntryEditModal';
 import { ProjectFormModal } from '../../components/ProjectFormModal';
+import { ExportModal } from '../../components/ExportModal';
 import ReportsScreen from './reports';
 import { t } from '../../lib/theme';
 
 // ── Constants ────────────────────────────────────────
 
 const MOBILE_BREAK = 768;
-const TOGGLE_W = 24;
 const ANIM_DURATION = 250;
 const ANIM_EASING = Easing.out(Easing.cubic);
 
 // ── Helpers ──────────────────────────────────────────
 
-function fmtMs(ms: number) {
-  if (ms <= 0) return '0m';
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
-function fmtTime(iso: string) {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function fmtDateHeader(iso: string) {
-  const d = new Date(iso);
-  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getFullYear()).slice(2)}`;
-}
-
 function entryDurationMs(e: TodayEntry) {
   if (!e.end_time) return 0;
-  return new Date(e.end_time).getTime() - new Date(e.start_time).getTime() - (e.paused_duration ?? 0) * 1000;
+  return Math.max(0, new Date(e.end_time).getTime() - new Date(e.start_time).getTime() - (e.paused_duration ?? 0) * 1000);
 }
 
-// ── Keyboard shortcuts (web) ─────────────────────────
+// ── Keyboard shortcuts ───────────────────────────────
 
 function useKeyboardShortcuts(
   status: string,
@@ -85,7 +68,7 @@ function useKeyboardShortcuts(
   }, [status, onPause, onResume, onStop]);
 }
 
-// ── Main screen ──────────────────────────────────────
+// ── Main ─────────────────────────────────────────────
 
 export default function TimerScreen() {
   const insets = useSafeAreaInsets();
@@ -95,419 +78,294 @@ export default function TimerScreen() {
   // Hooks
   const { session } = useAuth();
   const timer = useTimer();
-  const { entries, refresh: refreshEntries, totalTodayMs, taskTotals } = useTodayEntries();
+  const { entries: todayEntries, refresh: refreshToday, totalTodayMs, taskTotals: todayTaskTotals } = useTodayEntries();
+  const { folders, addFolder, updateFolder, deleteFolder } = useFolders();
   const { projects, addProject, updateProject, deleteProject } = useProjects();
   const { tasks, tasksForProject, addTask, updateTask, deleteTask } = useTasks();
 
-  // State
+  // Selection state
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true); // desktop: open by default
-  const [activeTab, setActiveTab] = useState<'timer' | 'reports'>('timer');
-  const [newActivityName, setNewActivityName] = useState('');
+  const [mobileTab, setMobileTab] = useState<'folders' | 'timer' | 'reports'>('timer');
+
+  // Project entries (all-time for selected project)
+  const { entries: projEntries, refresh: refreshProjEntries, taskTotals: projTaskTotals, entriesByTask, totalMs: projTotalMs } = useProjectEntries(selectedProjectId);
+
+  // Modals
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [editProject, setEditProject] = useState<Project | null>(null);
-  const [manualEntryTask, setManualEntryTask] = useState<{ taskId: string; projectId: string } | null>(null);
+  const [editEntry, setEditEntry] = useState<{
+    id?: string; task_id: string; project_id: string;
+    start_time?: string; end_time?: string; description?: string | null;
+  } | null>(null);
+  const [showExport, setShowExport] = useState(false);
 
-  // Close sidebar on mobile when switching to mobile breakpoint
-  useEffect(() => {
-    if (!isDesktop) setSidebarOpen(false);
-    else setSidebarOpen(true);
-  }, [isDesktop]);
-
-  // ── Desktop sidebar animation (width: 0 ↔ SIDEBAR_WIDTH) ──
-  const desktopAnim = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    if (isDesktop) {
-      Animated.timing(desktopAnim, {
-        toValue: sidebarOpen ? 1 : 0,
-        duration: ANIM_DURATION,
-        easing: ANIM_EASING,
-        useNativeDriver: false, // animating width, can't use native
-      }).start();
-    }
-  }, [sidebarOpen, isDesktop, desktopAnim]);
-
-  // ── Mobile drawer animation (translateX: -280 → 0) ──
-  const mobileAnim = useRef(new Animated.Value(0)).current;
+  // Mobile drawer
+  const drawerAnim = useRef(new Animated.Value(0)).current;
+  const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => {
     if (!isDesktop) {
-      Animated.timing(mobileAnim, {
-        toValue: sidebarOpen ? 1 : 0,
+      Animated.timing(drawerAnim, {
+        toValue: drawerOpen ? 1 : 0,
         duration: ANIM_DURATION,
         easing: ANIM_EASING,
         useNativeDriver: true,
       }).start();
     }
-  }, [sidebarOpen, isDesktop, mobileAnim]);
+  }, [drawerOpen, isDesktop, drawerAnim]);
 
-  // Keyboard shortcuts
   useKeyboardShortcuts(
     timer.status,
     timer.pause,
     timer.resume,
-    async () => { await timer.stop(); refreshEntries(); },
+    async () => { await timer.stop(); refreshToday(); refreshProjEntries(); },
   );
 
   // ── Computed ───────────────────────────────────────
 
-  const projectTotals = useMemo(() => {
+  // Projects for selected folder
+  const filteredProjects = useMemo(() => {
+    if (selectedFolderId === null) return projects;
+    return projects.filter((p) => p.folder_id === selectedFolderId);
+  }, [projects, selectedFolderId]);
+
+  // Per-project totals (today, for sidebar display)
+  const projectTodayTotals = useMemo(() => {
     const map = new Map<string, number>();
-    for (const e of entries) {
-      if (!e.project || !e.end_time) continue;
-      const ms = entryDurationMs(e);
-      map.set(e.project.id, (map.get(e.project.id) ?? 0) + ms);
+    for (const e of todayEntries) {
+      if (!e.project) continue;
+      map.set(e.project.id, (map.get(e.project.id) ?? 0) + entryDurationMs(e));
     }
     if (timer.running?.projectId && timer.status !== 'idle') {
       const pid = timer.running.projectId;
       map.set(pid, (map.get(pid) ?? 0) + timer.elapsed);
     }
     return map;
-  }, [entries, timer.running, timer.elapsed, timer.status]);
+  }, [todayEntries, timer.running, timer.elapsed, timer.status]);
 
-  const entriesByTask = useMemo(() => {
-    const map = new Map<string, TodayEntry[]>();
-    for (const e of entries) {
-      if (!e.task_id) continue;
-      if (!map.has(e.task_id)) map.set(e.task_id, []);
-      map.get(e.task_id)!.push(e);
+  // Per-folder totals (today)
+  const folderTodayTotals = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of projects) {
+      if (!p.folder_id) continue;
+      const ms = projectTodayTotals.get(p.id) ?? 0;
+      if (ms > 0) map.set(p.folder_id, (map.get(p.folder_id) ?? 0) + ms);
     }
     return map;
-  }, [entries]);
-
-  const displayTasks = useMemo(() => {
-    if (selectedProjectId) return tasksForProject(selectedProjectId);
-    return tasks;
-  }, [selectedProjectId, tasks, tasksForProject]);
-
-  const groupedEntries = useMemo(() => {
-    const filtered = selectedProjectId
-      ? entries.filter((e) => e.project?.id === selectedProjectId)
-      : entries;
-    const map = new Map<string, TodayEntry[]>();
-    for (const e of filtered) {
-      const dateKey = e.start_time.slice(0, 10);
-      if (!map.has(dateKey)) map.set(dateKey, []);
-      map.get(dateKey)!.push(e);
-    }
-    return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
-  }, [entries, selectedProjectId]);
+  }, [projects, projectTodayTotals]);
 
   const liveTotalMs = totalTodayMs + (timer.status !== 'idle' ? timer.elapsed : 0);
 
+  // Selected project/folder info
+  const selectedProject = selectedProjectId ? projects.find((p) => p.id === selectedProjectId) : null;
+  const selectedFolder = selectedProject?.folder_id ? folders.find((f) => f.id === selectedProject.folder_id) : null;
+  const tasksForSelected = selectedProjectId ? tasksForProject(selectedProjectId) : [];
+
+  // Running task id
+  const runningTaskId = timer.running?.taskId ?? null;
+
   // ── Handlers ───────────────────────────────────────
 
-  async function handleNewActivity() {
-    const name = newActivityName.trim();
-    if (!name || !selectedProjectId) return;
-    const taskId = await addTask(selectedProjectId, name);
-    setNewActivityName('');
-    if (taskId) {
-      await timer.start({ projectId: selectedProjectId, taskId });
-    }
-  }
-
-  async function handleStartTask(taskId: string, projectId: string) {
-    await timer.start({ projectId, taskId });
+  async function handleStartTask(taskId: string) {
+    if (!selectedProjectId) return;
+    await timer.start({ projectId: selectedProjectId, taskId });
   }
 
   async function handleStop() {
     await timer.stop();
-    refreshEntries();
+    refreshToday();
+    refreshProjEntries();
   }
 
   async function handleUpdateEntryDesc(entryId: string, desc: string) {
     await supabase.from('time_entries').update({ description: desc }).eq('id', entryId);
-    refreshEntries();
+    refreshProjEntries();
   }
 
   async function handleDeleteEntry(entryId: string) {
     await supabase.from('time_entries').delete().eq('id', entryId);
-    refreshEntries();
+    refreshProjEntries();
+    refreshToday();
   }
 
   async function handleSaveProject(name: string, color: string) {
-    if (editProject) await updateProject(editProject.id, name, color);
-    else await addProject(name, color);
+    if (editProject) await updateProject(editProject.id, name, color, editProject.folder_id);
+    else await addProject(name, color, selectedFolderId);
     setShowProjectForm(false);
     setEditProject(null);
   }
 
-  function openEditProject(project: Project) {
-    setEditProject(project);
-    setShowProjectForm(true);
+  function handleAddManualEntry(taskId: string) {
+    if (!selectedProjectId) return;
+    setEditEntry({ task_id: taskId, project_id: selectedProjectId });
   }
 
-  function openAddProject() {
-    setEditProject(null);
-    setShowProjectForm(true);
+  function handleEditEntry(entry: ProjectEntry) {
+    setEditEntry({
+      id: entry.id,
+      task_id: entry.task_id ?? '',
+      project_id: entry.project_id,
+      start_time: entry.start_time,
+      end_time: entry.end_time,
+      description: entry.description,
+    });
   }
 
   // ── Render ─────────────────────────────────────────
 
-  const selectedProject = selectedProjectId
-    ? projects.find((p) => p.id === selectedProjectId)
-    : null;
-
-  const sidebarElement = (
-    <Sidebar
-      projects={projects}
-      selectedProjectId={selectedProjectId}
-      onSelectProject={(id) => {
-        setSelectedProjectId(id);
-        setActiveTab('timer');
-        if (!isDesktop) setSidebarOpen(false);
-      }}
-      projectTotals={projectTotals}
-      totalTodayMs={liveTotalMs}
-      runningProjectId={timer.running?.projectId ?? null}
+  const folderPanel = (
+    <FolderPanel
+      folders={folders}
+      selectedFolderId={selectedFolderId}
+      onSelectFolder={setSelectedFolderId}
+      folderTotals={folderTodayTotals}
+      totalAllMs={liveTotalMs}
+      onAddFolder={addFolder}
+      onRenameFolder={updateFolder}
+      onDeleteFolder={deleteFolder}
       userEmail={session?.user.email ?? ''}
-      onAddProject={openAddProject}
-      onEditProject={openEditProject}
-      activeTab={activeTab}
-      onChangeTab={setActiveTab}
     />
   );
 
+  const projectPanel = (
+    <ProjectPanel
+      projects={filteredProjects}
+      selectedProjectId={selectedProjectId}
+      onSelectProject={(id) => {
+        setSelectedProjectId(id);
+        if (!isDesktop) { setMobileTab('timer'); setDrawerOpen(false); }
+      }}
+      projectTotals={projectTodayTotals}
+      runningProjectId={timer.running?.projectId ?? null}
+      onAddProject={() => { setEditProject(null); setShowProjectForm(true); }}
+      onEditProject={(p) => { setEditProject(p); setShowProjectForm(true); }}
+      onRenameProject={async (id, name) => {
+        await supabase.from('projects').update({ name }).eq('id', id);
+        // Refresh projects by triggering a re-fetch — use updateProject with current values
+        const proj = projects.find((p) => p.id === id);
+        if (proj) await updateProject(id, name, proj.color, proj.folder_id);
+      }}
+    />
+  );
+
+  const taskPanel = (
+    <TaskPanel
+      folderName={selectedFolder?.name ?? null}
+      projectName={selectedProject?.name ?? null}
+      projectColor={selectedProject?.color ?? t.textTertiary}
+      tasks={tasksForSelected}
+      entriesByTask={entriesByTask}
+      taskTotals={projTaskTotals}
+      totalProjectMs={projTotalMs}
+      timerStatus={timer.status}
+      runningTaskId={timer.status !== 'idle' && timer.running?.projectId === selectedProjectId ? runningTaskId : null}
+      elapsed={timer.elapsed}
+      onStartTask={handleStartTask}
+      onPause={timer.pause}
+      onResume={timer.resume}
+      onStop={handleStop}
+      onAddTask={async (name) => {
+        if (selectedProjectId) {
+          const id = await addTask(selectedProjectId, name);
+          if (id) await timer.start({ projectId: selectedProjectId, taskId: id });
+        }
+      }}
+      onRenameTask={updateTask}
+      onDeleteTask={deleteTask}
+      onUpdateEntryDesc={handleUpdateEntryDesc}
+      onDeleteEntry={handleDeleteEntry}
+      onEditEntry={handleEditEntry}
+      onAddManualEntry={handleAddManualEntry}
+      onExport={() => setShowExport(true)}
+    />
+  );
+
+  // ════════════════════════════════════════════════════
+  // DESKTOP
+  // ════════════════════════════════════════════════════
+  if (isDesktop) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top }]}>
+        {folderPanel}
+        {projectPanel}
+        <View style={styles.mainDesktop}>{taskPanel}</View>
+
+        <ProjectFormModal
+          visible={showProjectForm}
+          project={editProject}
+          onSave={handleSaveProject}
+          onClose={() => { setShowProjectForm(false); setEditProject(null); }}
+        />
+        <TimeEntryEditModal
+          entry={editEntry}
+          onClose={() => setEditEntry(null)}
+          onSaved={() => { refreshProjEntries(); refreshToday(); }}
+        />
+        <ExportModal
+          visible={showExport}
+          project={selectedProject ?? null}
+          allProjects={projects}
+          tasks={tasks}
+          onClose={() => setShowExport(false)}
+        />
+      </View>
+    );
+  }
+
+  // ════════════════════════════════════════════════════
+  // MOBILE
+  // ════════════════════════════════════════════════════
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-
-      {/* ════════ DESKTOP: animated sidebar + toggle strip ════════ */}
-      {isDesktop && (
-        <View style={styles.desktopSidebarWrap}>
-          {/* Animated width container that clips the sidebar */}
-          <Animated.View
-            style={[
-              styles.desktopSidebarClip,
-              {
-                width: desktopAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, SIDEBAR_WIDTH],
-                }),
-              },
-            ]}
-          >
-            {/* Sidebar always renders at full 280px; clip hides it */}
-            <View style={styles.desktopSidebarInner}>
-              {sidebarElement}
-            </View>
-          </Animated.View>
-
-          {/* Toggle strip – always visible */}
-          <Pressable
-            style={styles.toggleStrip}
-            onPress={() => setSidebarOpen((prev) => !prev)}
-          >
-            <Text style={styles.toggleIcon}>{sidebarOpen ? '\u25C0' : '\u25B6'}</Text>
-          </Pressable>
-        </View>
-      )}
-
-      {/* ════════ MOBILE: drawer overlay ════════ */}
-      {!isDesktop && sidebarOpen && (
-        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-          {/* Backdrop */}
-          <Animated.View
-            style={[
-              StyleSheet.absoluteFill,
-              { backgroundColor: '#00000066', opacity: mobileAnim },
-            ]}
-          >
-            <Pressable style={StyleSheet.absoluteFill} onPress={() => setSidebarOpen(false)} />
-          </Animated.View>
-
-          {/* Drawer */}
-          <Animated.View
-            style={[
-              styles.mobileDrawer,
-              {
-                transform: [{
-                  translateX: mobileAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [-SIDEBAR_WIDTH, 0],
-                  }),
-                }],
-              },
-            ]}
-          >
-            {sidebarElement}
-          </Animated.View>
-        </View>
-      )}
-
-      {/* ════════ MAIN PANEL ════════ */}
-      <View style={styles.main}>
-        {/* Top bar */}
-        <View style={styles.topBar}>
-          {/* Mobile hamburger */}
-          {!isDesktop && (
-            <Pressable style={styles.hamburger} onPress={() => setSidebarOpen(true)}>
-              <Text style={styles.hamburgerIcon}>{'\u2630'}</Text>
-            </Pressable>
-          )}
-          <Text style={styles.topTitle}>
-            {selectedProject ? selectedProject.name : 'Alle Projekte'}
-          </Text>
-          {timer.status !== 'idle' && (
-            <View style={styles.topTimerChip}>
-              <View style={styles.topTimerDot} />
-              <Text style={styles.topTimerText}>{fmtMs(timer.elapsed)}</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Reports tab */}
-        {activeTab === 'reports' && <ReportsScreen />}
-
-        {/* Timer tab */}
-        {activeTab === 'timer' && (
-        <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-          {/* New activity input */}
-          {selectedProjectId && (
-            <View style={styles.newActivityRow}>
-              <TextInput
-                style={styles.newActivityInput}
-                placeholder="Neue Aktivität starten..."
-                placeholderTextColor={t.textPlaceholder}
-                value={newActivityName}
-                onChangeText={setNewActivityName}
-                onSubmitEditing={handleNewActivity}
-                returnKeyType="go"
-              />
-            </View>
-          )}
-          {!selectedProjectId && (
-            <View style={styles.newActivityRow}>
-              <Text style={styles.newActivityHint}>
-                Wähle ein Projekt in der Sidebar, um eine Aktivität zu starten.
-              </Text>
-            </View>
-          )}
-
-          {/* Activity cards */}
-          {displayTasks.length > 0 && (
-            <View style={styles.cardsSection}>
-              <Text style={styles.sectionLabel}>AKTIVITÄTEN</Text>
-              <View style={styles.cardsList}>
-                {displayTasks.map((task) => {
-                  const isRunning =
-                    timer.running?.taskId === task.id && timer.status !== 'idle';
-                  const project = projects.find((p) => p.id === task.project_id);
-                  return (
-                    <ActivityCard
-                      key={task.id}
-                      task={task}
-                      projectColor={project?.color ?? t.textTertiary}
-                      entries={entriesByTask.get(task.id) ?? []}
-                      isRunning={isRunning}
-                      timerStatus={timer.status}
-                      elapsed={isRunning ? timer.elapsed : 0}
-                      totalMs={taskTotals.get(task.id) ?? 0}
-                      onStart={() => handleStartTask(task.id, task.project_id)}
-                      onPause={timer.pause}
-                      onResume={timer.resume}
-                      onStop={handleStop}
-                      onRenameTask={(name) => updateTask(task.id, name)}
-                      onDeleteTask={() => deleteTask(task.id)}
-                      onUpdateEntryDesc={handleUpdateEntryDesc}
-                      onDeleteEntry={handleDeleteEntry}
-                      onAddManualEntry={() =>
-                        setManualEntryTask({ taskId: task.id, projectId: task.project_id })
-                      }
-                    />
-                  );
-                })}
-              </View>
-            </View>
-          )}
-
-          {/* Empty: no tasks */}
-          {displayTasks.length === 0 && selectedProjectId && (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyIcon}>{'\u25C6'}</Text>
-              <Text style={styles.emptyTitle}>Keine Aktivitäten</Text>
-              <Text style={styles.emptyHint}>
-                Gib oben einen Namen ein und drücke Enter,{'\n'}um eine neue Aktivität
-                zu starten.
-              </Text>
-            </View>
-          )}
-
-          {/* Empty: no projects */}
-          {projects.length === 0 && (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyIcon}>{'\u25C6'}</Text>
-              <Text style={styles.emptyTitle}>Willkommen bei TimeManager</Text>
-              <Text style={styles.emptyHint}>
-                Erstelle dein erstes Projekt in der Sidebar,{'\n'}um mit der Zeiterfassung zu
-                beginnen.
-              </Text>
-              <Pressable style={styles.emptyBtn} onPress={openAddProject}>
-                <Text style={styles.emptyBtnText}>+ Projekt erstellen</Text>
-              </Pressable>
-            </View>
-          )}
-
-          {/* Historical entries */}
-          {groupedEntries.length > 0 && (
-            <View style={styles.historySection}>
-              <Text style={styles.sectionLabel}>ZEITEINTRÄGE</Text>
-              {groupedEntries.map(([dateKey, dayEntries]) => (
-                <View key={dateKey} style={styles.historyGroup}>
-                  <Text style={styles.historyDate}>{fmtDateHeader(dateKey)}</Text>
-                  {dayEntries.map((e, i) => (
-                    <View
-                      key={e.id}
-                      style={[styles.historyRow, i % 2 === 1 && styles.historyRowAlt]}
-                    >
-                      <Text style={styles.historyTime}>
-                        {fmtTime(e.start_time)} {'\u2192'}{' '}
-                        {e.end_time ? fmtTime(e.end_time) : '...'}
-                      </Text>
-                      <Text style={styles.historyDuration}>{fmtMs(entryDurationMs(e))}</Text>
-                      {e.project && (
-                        <View style={[styles.historyChip, { backgroundColor: e.project.color + '18' }]}>
-                          <View style={[styles.historyChipDot, { backgroundColor: e.project.color }]} />
-                          <Text
-                            style={[styles.historyChipText, { color: e.project.color }]}
-                            numberOfLines={1}
-                          >
-                            {e.project.name}
-                          </Text>
-                        </View>
-                      )}
-                      <Text style={styles.historyDesc} numberOfLines={1}>
-                        {e.description || ''}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              ))}
-            </View>
-          )}
-        </ScrollView>
+    <View style={[styles.root, { paddingTop: insets.top, flexDirection: 'column' }]}>
+      {/* Content area */}
+      <View style={styles.mobileContent}>
+        {mobileTab === 'folders' && (
+          <View style={styles.mobilePanels}>
+            {folderPanel}
+            <View style={styles.mobileProjectWrap}>{projectPanel}</View>
+          </View>
         )}
+        {mobileTab === 'timer' && taskPanel}
+        {mobileTab === 'reports' && <ReportsScreen />}
       </View>
 
-      {/* ── Modals ── */}
+      {/* Bottom tab bar */}
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 6) }]}>
+        {(['folders', 'timer', 'reports'] as const).map((tab) => {
+          const active = mobileTab === tab;
+          const labels = { folders: 'Ordner', timer: 'Timer', reports: 'Analyse' };
+          const icons = { folders: '\u{1F4C1}', timer: '\u23F1', reports: '\u{1F4CA}' };
+          return (
+            <Pressable key={tab} style={styles.bottomTab} onPress={() => setMobileTab(tab)}>
+              <Text style={[styles.bottomTabIcon, active && styles.bottomTabIconActive]}>
+                {icons[tab]}
+              </Text>
+              <Text style={[styles.bottomTabLabel, active && styles.bottomTabLabelActive]}>
+                {labels[tab]}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <ProjectFormModal
         visible={showProjectForm}
         project={editProject}
         onSave={handleSaveProject}
-        onClose={() => {
-          setShowProjectForm(false);
-          setEditProject(null);
-        }}
+        onClose={() => { setShowProjectForm(false); setEditProject(null); }}
       />
-
-      {manualEntryTask && (
-        <ManualEntryModal
-          visible
-          taskId={manualEntryTask.taskId}
-          projectId={manualEntryTask.projectId}
-          onClose={() => setManualEntryTask(null)}
-          onSaved={() => refreshEntries()}
-        />
-      )}
+      <TimeEntryEditModal
+        entry={editEntry}
+        onClose={() => setEditEntry(null)}
+        onSaved={() => { refreshProjEntries(); refreshToday(); }}
+      />
+      <ExportModal
+        visible={showExport}
+        project={selectedProject ?? null}
+        allProjects={projects}
+        tasks={tasks}
+        onClose={() => setShowExport(false)}
+      />
     </View>
   );
 }
@@ -521,173 +379,25 @@ const styles = StyleSheet.create({
     backgroundColor: t.bg,
   },
 
-  // ── Desktop sidebar ──
-  desktopSidebarWrap: {
+  // Desktop
+  mainDesktop: { flex: 1 },
+
+  // Mobile
+  mobileContent: { flex: 1 },
+  mobilePanels: { flex: 1, flexDirection: 'row' },
+  mobileProjectWrap: { flex: 1 },
+
+  // Bottom bar
+  bottomBar: {
     flexDirection: 'row',
+    backgroundColor: t.panelBg,
+    borderTopWidth: 1,
+    borderTopColor: t.panelBorder,
+    paddingTop: 6,
   },
-  desktopSidebarClip: {
-    overflow: 'hidden',
-  },
-  desktopSidebarInner: {
-    width: SIDEBAR_WIDTH,
-    height: '100%',
-  },
-  toggleStrip: {
-    width: TOGGLE_W,
-    backgroundColor: t.card,
-    borderRightWidth: 1,
-    borderRightColor: t.border,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  toggleIcon: {
-    fontSize: 10,
-    color: t.textTertiary,
-  },
-
-  // ── Mobile drawer ──
-  mobileDrawer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    bottom: 0,
-    width: SIDEBAR_WIDTH,
-    zIndex: 10,
-  },
-
-  // ── Main panel ──
-  main: { flex: 1 },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: t.card,
-    borderBottomWidth: 1,
-    borderBottomColor: t.border,
-    gap: 10,
-  },
-  hamburger: { padding: 4 },
-  hamburgerIcon: { fontSize: 20, color: t.text },
-  topTitle: { fontSize: 16, fontWeight: '600', color: t.text, flex: 1 },
-  topTimerChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: t.accentLight,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: t.radiusChip,
-  },
-  topTimerDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: t.green,
-  },
-  topTimerText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: t.accent,
-    fontVariant: ['tabular-nums'],
-    fontFamily: Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
-  },
-
-  // ── Scroll ──
-  scrollArea: { flex: 1 },
-  scrollContent: { padding: 24, paddingBottom: 40 },
-
-  // ── New activity ──
-  newActivityRow: { marginBottom: 20 },
-  newActivityInput: {
-    fontSize: 16,
-    color: t.text,
-    fontWeight: '400',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: t.borderLight,
-  },
-  newActivityHint: {
-    fontSize: 14,
-    color: t.textPlaceholder,
-    paddingVertical: 12,
-  },
-
-  // ── Cards ──
-  cardsSection: { marginBottom: 24 },
-  sectionLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: t.textTertiary,
-    letterSpacing: 1.5,
-    marginBottom: 10,
-  },
-  cardsList: { gap: 8 },
-
-  // ── Empty ──
-  emptyState: { alignItems: 'center', paddingTop: 48, paddingBottom: 32 },
-  emptyIcon: { fontSize: 36, color: t.textPlaceholder, marginBottom: 12 },
-  emptyTitle: { fontSize: 16, fontWeight: '600', color: t.textSecondary },
-  emptyHint: {
-    fontSize: 13,
-    color: t.textTertiary,
-    textAlign: 'center',
-    marginTop: 6,
-    lineHeight: 20,
-  },
-  emptyBtn: {
-    marginTop: 16,
-    backgroundColor: t.accent,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: t.radiusInput,
-  },
-  emptyBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-
-  // ── History ──
-  historySection: { marginTop: 8 },
-  historyGroup: { marginBottom: 16 },
-  historyDate: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: t.accent,
-    marginBottom: 6,
-    paddingHorizontal: 2,
-  },
-  historyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    gap: 10,
-    borderRadius: 4,
-  },
-  historyRowAlt: { backgroundColor: t.rowAlt },
-  historyTime: {
-    fontSize: 12,
-    color: t.textTertiary,
-    fontVariant: ['tabular-nums'],
-    width: 100,
-    fontFamily: Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
-  },
-  historyDuration: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: t.textSecondary,
-    fontVariant: ['tabular-nums'],
-    width: 50,
-    fontFamily: Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
-  },
-  historyChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: t.radiusChip,
-    maxWidth: 120,
-  },
-  historyChipDot: { width: 5, height: 5, borderRadius: 2.5 },
-  historyChipText: { fontSize: 10, fontWeight: '600' },
-  historyDesc: { flex: 1, fontSize: 13, color: t.text },
+  bottomTab: { flex: 1, alignItems: 'center', gap: 2 },
+  bottomTabIcon: { fontSize: 18, color: t.textTertiary },
+  bottomTabIconActive: { color: t.accent },
+  bottomTabLabel: { fontSize: 10, color: t.textTertiary, fontWeight: '500' },
+  bottomTabLabelActive: { color: t.accent, fontWeight: '600' },
 });

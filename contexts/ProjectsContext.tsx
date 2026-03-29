@@ -6,12 +6,13 @@ export type Project = {
   id: string;
   name: string;
   color: string;
+  folder_id: string | null;
 };
 
 type ProjectsContextType = {
   projects: Project[];
-  addProject: (name: string, color: string) => Promise<void>;
-  updateProject: (id: string, name: string, color: string) => Promise<void>;
+  addProject: (name: string, color: string, folderId?: string | null) => Promise<void>;
+  updateProject: (id: string, name: string, color: string, folderId?: string | null) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
 };
 
@@ -30,10 +31,10 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
     if (!session) return;
     const { data } = await supabase
       .from('projects')
-      .select('id, name, color')
+      .select('id, name, color, folder_id')
       .eq('user_id', session.user.id)
       .order('name');
-    if (data) setProjects(data);
+    if (data) setProjects(data as Project[]);
   }, [session]);
 
   useEffect(() => {
@@ -41,22 +42,22 @@ export function ProjectsProvider({ children }: { children: ReactNode }) {
   }, [fetch]);
 
   const addProject = useCallback(
-    async (name: string, color: string) => {
+    async (name: string, color: string, folderId: string | null = null) => {
       if (!session) return;
       const { error } = await supabase
         .from('projects')
-        .insert({ user_id: session.user.id, name, color });
-      if (error) {
-        console.error('addProject error:', error.message, error.details, error.hint);
-      }
+        .insert({ user_id: session.user.id, name, color, folder_id: folderId });
+      if (error) console.error('addProject error:', error.message);
       await fetch();
     },
     [session, fetch],
   );
 
   const updateProject = useCallback(
-    async (id: string, name: string, color: string) => {
-      await supabase.from('projects').update({ name, color }).eq('id', id);
+    async (id: string, name: string, color: string, folderId?: string | null) => {
+      const update: Record<string, unknown> = { name, color };
+      if (folderId !== undefined) update.folder_id = folderId;
+      await supabase.from('projects').update(update).eq('id', id);
       await fetch();
     },
     [fetch],

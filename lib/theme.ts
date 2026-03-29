@@ -1,59 +1,70 @@
 export const t = {
   // Backgrounds
-  bg: '#F5F5F5',
-  card: '#FFFFFF',
-  cardHover: '#F9F9F9',
-
-  // Sidebar
-  sidebar: '#FFFFFF',
-  sidebarBorder: '#E0E0E0',
-  sidebarHover: '#F3F4F6',
-  sidebarActive: '#EFF6FF',
+  bg: '#0D1117',
+  panelBg: '#161B22',
+  card: '#161B22',
+  cardHover: '#1C2128',
 
   // Text
-  text: '#1A1A1A',
-  textSecondary: '#6B7280',
-  textTertiary: '#9CA3AF',
-  textPlaceholder: '#D1D5DB',
+  text: '#E6EDF3',
+  textSecondary: '#7D8590',
+  textTertiary: '#484F58',
+  textPlaceholder: '#484F58',
 
-  // Accent (Timing blue)
-  accent: '#2563EB',
-  accentLight: '#EFF6FF',
-  accentBorder: '#BFDBFE',
+  // Accent
+  accent: '#2F81F7',
+  accentLight: '#1F2D3D',
+  accentBorder: '#1F6FEB',
 
-  // Borders & Shadows
-  border: '#E8E8E8',
-  borderLight: '#F3F4F6',
-  shadow: 'rgba(0,0,0,0.06)',
-  shadowMd: 'rgba(0,0,0,0.1)',
+  // Borders
+  border: '#30363D',
+  borderLight: '#21262D',
+
+  // Shadows
+  shadow: 'rgba(0,0,0,0.3)',
+  shadowMd: 'rgba(0,0,0,0.4)',
 
   // Status
-  green: '#22C55E',
-  greenBg: '#F0FDF4',
-  greenBorder: '#BBF7D0',
-  yellow: '#EAB308',
-  yellowBg: '#FEFCE8',
-  red: '#EF4444',
-  redBg: '#FEF2F2',
+  green: '#3FB950',
+  greenBg: '#0D2818',
+  greenBorder: '#238636',
+  yellow: '#D29922',
+  yellowBg: '#2D1F00',
+  red: '#F85149',
+  redBg: '#3D1418',
+
+  // Active
+  activeRow: '#1F2D3D',
+  activeBorder: '#2F81F7',
+  activeBg: '#1F2D3D',
+
+  // Row alt
+  rowAlt: '#0D1117',
 
   // Radii
-  radiusCard: 8,
+  radiusCard: 6,
   radiusInput: 6,
+  radiusModal: 8,
   radiusChip: 999,
 
-  // Active / running state
-  activeBorder: '#2563EB',
-  activeBg: '#EFF6FF',
+  // Panel
+  panelBorder: '#30363D',
 
-  // Alternating row
-  rowAlt: '#F9F9F9',
+  // Modal
+  modalOverlay: 'rgba(0,0,0,0.7)',
 
-  // Card shadow (RN compatible)
+  // Sidebar (compat aliases)
+  sidebar: '#161B22',
+  sidebarBorder: '#30363D',
+  sidebarHover: '#1C2128',
+  sidebarActive: '#1F2D3D',
+
+  // Card shadow
   cardShadow: {
     shadowColor: '#000' as const,
-    shadowOffset: { width: 0, height: 1 } as const,
-    shadowOpacity: 0.06,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 } as const,
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
 };
