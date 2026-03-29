@@ -17,15 +17,15 @@ import { useTasks } from '../../hooks/useTasks';
 import { useProjects, type Project } from '../../contexts/ProjectsContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
-import { Sidebar } from '../../components/Sidebar';
+import { Sidebar, SIDEBAR_WIDTH } from '../../components/Sidebar';
 import { ActivityCard } from '../../components/ActivityCard';
 import { ManualEntryModal } from '../../components/ManualEntryModal';
 import { ProjectFormModal } from '../../components/ProjectFormModal';
+import ReportsScreen from './reports';
 import { t } from '../../lib/theme';
 
 // ── Helpers ──────────────────────────────────────────
 
-const SIDEBAR_W = 280;
 const MOBILE_BREAK = 768;
 
 function useWindowWidth() {
@@ -105,6 +105,7 @@ export default function TimerScreen() {
   // State
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'timer' | 'reports'>('timer');
   const [newActivityName, setNewActivityName] = useState('');
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [editProject, setEditProject] = useState<Project | null>(null);
@@ -240,6 +241,7 @@ export default function TimerScreen() {
       selectedProjectId={selectedProjectId}
       onSelectProject={(id) => {
         setSelectedProjectId(id);
+        setActiveTab('timer');
         if (isMobile) setSidebarOpen(false);
       }}
       projectTotals={projectTotals}
@@ -248,6 +250,8 @@ export default function TimerScreen() {
       userEmail={session?.user.email ?? ''}
       onAddProject={openAddProject}
       onEditProject={openEditProject}
+      activeTab={activeTab}
+      onChangeTab={setActiveTab}
     />
   );
 
@@ -275,7 +279,7 @@ export default function TimerScreen() {
                   {
                     translateX: drawerAnim.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [-SIDEBAR_W, 0],
+                      outputRange: [-SIDEBAR_WIDTH, 0],
                     }),
                   },
                 ],
@@ -307,13 +311,18 @@ export default function TimerScreen() {
           )}
         </View>
 
+        {/* ── Reports tab ── */}
+        {activeTab === 'reports' && <ReportsScreen />}
+
+        {/* ── Timer tab ── */}
+        {activeTab === 'timer' && (
         <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
           {/* ── New activity input ── */}
           {selectedProjectId && (
             <View style={styles.newActivityRow}>
               <TextInput
                 style={styles.newActivityInput}
-                placeholder="Neue Aktivit\u00E4t starten..."
+                placeholder="Neue Aktivität starten..."
                 placeholderTextColor={t.textPlaceholder}
                 value={newActivityName}
                 onChangeText={setNewActivityName}
@@ -325,7 +334,7 @@ export default function TimerScreen() {
           {!selectedProjectId && (
             <View style={styles.newActivityRow}>
               <Text style={styles.newActivityHint}>
-                W\u00E4hle ein Projekt in der Sidebar, um eine Aktivit\u00E4t zu starten.
+                Wähle ein Projekt in der Sidebar, um eine Aktivität zu starten.
               </Text>
             </View>
           )}
@@ -333,7 +342,7 @@ export default function TimerScreen() {
           {/* ── Activity cards ── */}
           {displayTasks.length > 0 && (
             <View style={styles.cardsSection}>
-              <Text style={styles.sectionLabel}>AKTIVIT\u00C4TEN</Text>
+              <Text style={styles.sectionLabel}>AKTIVITÄTEN</Text>
               <View style={styles.cardsList}>
                 {displayTasks.map((task) => {
                   const isRunning =
@@ -371,9 +380,9 @@ export default function TimerScreen() {
           {displayTasks.length === 0 && selectedProjectId && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>{'\u25C6'}</Text>
-              <Text style={styles.emptyTitle}>Keine Aktivit\u00E4ten</Text>
+              <Text style={styles.emptyTitle}>Keine Aktivitäten</Text>
               <Text style={styles.emptyHint}>
-                Gib oben einen Namen ein und dr\u00FCcke Enter,{'\n'}um eine neue Aktivit\u00E4t
+                Gib oben einen Namen ein und drücke Enter,{'\n'}um eine neue Aktivität
                 zu starten.
               </Text>
             </View>
@@ -397,7 +406,7 @@ export default function TimerScreen() {
           {/* ── Historical entries ── */}
           {groupedEntries.length > 0 && (
             <View style={styles.historySection}>
-              <Text style={styles.sectionLabel}>ZEITEINTR\u00C4GE</Text>
+              <Text style={styles.sectionLabel}>ZEITEINTRÄGE</Text>
               {groupedEntries.map(([dateKey, dayEntries]) => (
                 <View key={dateKey} style={styles.historyGroup}>
                   <Text style={styles.historyDate}>{fmtDateHeader(dateKey)}</Text>
@@ -432,6 +441,7 @@ export default function TimerScreen() {
             </View>
           )}
         </ScrollView>
+        )}
       </View>
 
       {/* ── Modals ── */}
@@ -473,7 +483,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     bottom: 0,
-    width: SIDEBAR_W,
+    width: SIDEBAR_WIDTH,
     zIndex: 10,
   },
 
@@ -517,22 +527,22 @@ const styles = StyleSheet.create({
 
   // Scroll
   scrollArea: { flex: 1 },
-  scrollContent: { padding: 20, paddingBottom: 40 },
+  scrollContent: { padding: 24, paddingBottom: 40 },
 
   // New activity
   newActivityRow: { marginBottom: 20 },
   newActivityInput: {
-    fontSize: 18,
+    fontSize: 16,
     color: t.text,
     fontWeight: '400',
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: t.borderLight,
   },
   newActivityHint: {
     fontSize: 14,
     color: t.textPlaceholder,
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
 
   // Cards section

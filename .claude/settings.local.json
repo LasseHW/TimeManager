@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find /Users/lasse.wilhelm/PrivateProjects/TimeManager -name *.ts -o -name *.tsx)"
+      "Bash(find /Users/lasse.wilhelm/PrivateProjects/TimeManager -name *.ts -o -name *.tsx)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

@@ -23,6 +23,8 @@ type Props = {
   userEmail: string;
   onAddProject: () => void;
   onEditProject: (project: Project) => void;
+  activeTab: 'timer' | 'reports';
+  onChangeTab: (tab: 'timer' | 'reports') => void;
 };
 
 function fmtMs(ms: number) {
@@ -43,6 +45,8 @@ export function Sidebar({
   userEmail,
   onAddProject,
   onEditProject,
+  activeTab,
+  onChangeTab,
 }: Props) {
   const [search, setSearch] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -51,24 +55,59 @@ export function Sidebar({
     ? projects.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()))
     : projects;
 
-  const initial = (userEmail ?? '?')[0].toUpperCase();
+  const initial = userEmail ? userEmail[0].toUpperCase() : '?';
 
   return (
     <View style={styles.container}>
-      {/* ── User info ── */}
+      {/* ── User row + settings ── */}
       <View style={styles.userSection}>
         <View style={styles.userRow}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{initial}</Text>
           </View>
-          <View style={styles.userInfo}>
-            <Text style={styles.userEmail} numberOfLines={1}>
-              {userEmail}
-            </Text>
-          </View>
+          <Text style={styles.userEmail} numberOfLines={1}>
+            {userEmail}
+          </Text>
+          <Pressable style={styles.settingsBtn} onPress={() => setShowSettings(true)}>
+            <Text style={styles.settingsIcon}>{'⚙'}</Text>
+          </Pressable>
         </View>
+      </View>
 
-        {/* Search */}
+      {/* ── Tabs: Timer | Reports ── */}
+      <View style={styles.tabRow}>
+        <Pressable
+          style={[styles.tab, activeTab === 'timer' && styles.tabActive]}
+          onPress={() => onChangeTab('timer')}
+        >
+          <Text style={[styles.tabText, activeTab === 'timer' && styles.tabTextActive]}>
+            Timer
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tab, activeTab === 'reports' && styles.tabActive]}
+          onPress={() => onChangeTab('reports')}
+        >
+          <Text style={[styles.tabText, activeTab === 'reports' && styles.tabTextActive]}>
+            Analyse
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* ── Today total ── */}
+      <View style={styles.statsRow}>
+        <Text style={styles.statsLabel}>Heute</Text>
+        <Text style={styles.statsValue}>{fmtMs(totalTodayMs)}</Text>
+      </View>
+
+      {/* ── Add project button (prominent, at top) ── */}
+      <Pressable style={styles.addProjectBtn} onPress={onAddProject}>
+        <Text style={styles.addProjectIcon}>+</Text>
+        <Text style={styles.addProjectText}>Neues Projekt</Text>
+      </Pressable>
+
+      {/* ── Search ── */}
+      <View style={styles.searchWrap}>
         <TextInput
           style={styles.searchInput}
           placeholder="Suchen..."
@@ -76,12 +115,6 @@ export function Sidebar({
           value={search}
           onChangeText={setSearch}
         />
-      </View>
-
-      {/* ── Today total ── */}
-      <View style={styles.statsSection}>
-        <Text style={styles.statsLabel}>Heute gesamt</Text>
-        <Text style={styles.statsValue}>{fmtMs(totalTodayMs)}</Text>
       </View>
 
       {/* ── Project list ── */}
@@ -93,12 +126,9 @@ export function Sidebar({
         >
           <View style={[styles.projectDot, { backgroundColor: t.textTertiary }]} />
           <Text
-            style={[
-              styles.projectName,
-              selectedProjectId === null && styles.projectNameActive,
-            ]}
+            style={[styles.projectName, selectedProjectId === null && styles.projectNameActive]}
           >
-            Alle Projekte
+            Alle
           </Text>
         </Pressable>
 
@@ -131,29 +161,17 @@ export function Sidebar({
         })}
       </ScrollView>
 
-      {/* ── Bottom actions ── */}
-      <View style={styles.bottomSection}>
-        <Pressable style={styles.addProjectBtn} onPress={onAddProject}>
-          <Text style={styles.addProjectIcon}>+</Text>
-          <Text style={styles.addProjectText}>Neues Projekt</Text>
-        </Pressable>
-
-        <Pressable style={styles.settingsBtn} onPress={() => setShowSettings(true)}>
-          <Text style={styles.settingsIcon}>&#9881;</Text>
-        </Pressable>
-      </View>
-
       {/* Settings modal */}
       <Modal visible={showSettings} transparent animationType="fade">
         <View style={styles.settingsBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowSettings(false)} />
           <View style={[styles.settingsMenu, t.cardShadow]}>
-            <Text style={styles.settingsEmail} numberOfLines={1}>
+            <Text style={styles.settingsMenuEmail} numberOfLines={1}>
               {userEmail}
             </Text>
             <View style={styles.settingsDivider} />
             <Pressable
-              style={styles.settingsItem}
+              style={styles.settingsMenuItem}
               onPress={() => {
                 setShowSettings(false);
                 supabase.auth.signOut();
@@ -168,107 +186,128 @@ export function Sidebar({
   );
 }
 
+const SIDEBAR_WIDTH = 220;
+
 const styles = StyleSheet.create({
   container: {
-    width: 280,
+    width: SIDEBAR_WIDTH,
     backgroundColor: t.sidebar,
     borderRightWidth: 1,
-    borderRightColor: t.sidebarBorder,
-    flex: 1,
+    borderRightColor: '#E5E7EB',
   },
 
   // User
   userSection: {
-    padding: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: t.borderLight,
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: 6,
   },
-  userRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
+  userRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   avatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: t.accent,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  avatarText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  userInfo: { flex: 1 },
-  userEmail: { fontSize: 12, color: t.textSecondary, fontWeight: '500' },
-  searchInput: {
-    backgroundColor: t.bg,
+  avatarText: { color: '#fff', fontSize: 9, fontWeight: '700' },
+  userEmail: { flex: 1, fontSize: 10, color: t.textTertiary, fontWeight: '400' },
+  settingsBtn: { padding: 2 },
+  settingsIcon: { fontSize: 13, color: t.textTertiary },
+
+  // Tabs
+  tabRow: {
+    flexDirection: 'row',
+    marginHorizontal: 10,
+    marginTop: 4,
+    marginBottom: 6,
     borderRadius: t.radiusInput,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    fontSize: 13,
-    color: t.text,
-    borderWidth: 1,
-    borderColor: t.border,
+    backgroundColor: t.bg,
+    padding: 2,
   },
+  tab: {
+    flex: 1,
+    paddingVertical: 4,
+    alignItems: 'center',
+    borderRadius: t.radiusInput - 2,
+  },
+  tabActive: { backgroundColor: t.card, ...t.cardShadow },
+  tabText: { fontSize: 10, fontWeight: '500', color: t.textTertiary },
+  tabTextActive: { color: t.accent, fontWeight: '600' },
 
   // Stats
-  statsSection: {
+  statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: t.borderLight,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
   },
-  statsLabel: { fontSize: 12, color: t.textSecondary, fontWeight: '500' },
-  statsValue: { fontSize: 14, fontWeight: '700', color: t.accent },
+  statsLabel: { fontSize: 10, color: t.textTertiary, fontWeight: '500' },
+  statsValue: { fontSize: 12, fontWeight: '700', color: t.accent },
+
+  // Add project
+  addProjectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginHorizontal: 10,
+    marginTop: 2,
+    marginBottom: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: t.accentLight,
+    borderRadius: t.radiusInput,
+    borderWidth: 1,
+    borderColor: t.accentBorder,
+  },
+  addProjectIcon: { fontSize: 13, color: t.accent, fontWeight: '700' },
+  addProjectText: { fontSize: 12, color: t.accent, fontWeight: '600' },
+
+  // Search
+  searchWrap: { paddingHorizontal: 10, marginBottom: 4 },
+  searchInput: {
+    backgroundColor: t.bg,
+    borderRadius: t.radiusInput,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    fontSize: 11,
+    color: t.text,
+  },
 
   // Project list
   projectScroll: { flex: 1 },
-  projectScrollContent: { paddingVertical: 6 },
+  projectScrollContent: { paddingVertical: 2 },
   projectRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 9,
-    paddingHorizontal: 16,
-    marginHorizontal: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    marginHorizontal: 4,
     borderRadius: t.radiusInput,
   },
   projectRowActive: { backgroundColor: t.sidebarActive },
-  projectRowInner: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  projectRowInner: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
   runningBar: {
-    width: 3,
-    height: 16,
-    borderRadius: 1.5,
+    width: 2,
+    height: 12,
+    borderRadius: 1,
     backgroundColor: t.accent,
-    marginRight: 2,
+    marginRight: 1,
   },
-  projectDot: { width: 8, height: 8, borderRadius: 4 },
+  projectDot: { width: 6, height: 6, borderRadius: 3 },
   projectName: { fontSize: 13, color: t.text, fontWeight: '400', flex: 1 },
   projectNameActive: { fontWeight: '600', color: t.accent },
   projectTime: {
-    fontSize: 11,
-    color: t.textTertiary,
+    fontSize: 12,
+    color: '#9CA3AF',
     fontWeight: '500',
     fontVariant: ['tabular-nums'],
-    marginLeft: 8,
-    fontFamily:
-      Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
+    marginLeft: 6,
+    fontFamily: Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
   },
-
-  // Bottom
-  bottomSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-    borderTopColor: t.borderLight,
-  },
-  addProjectBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  addProjectIcon: { fontSize: 16, color: t.accent, fontWeight: '600' },
-  addProjectText: { fontSize: 12, color: t.accent, fontWeight: '600' },
-  settingsBtn: { padding: 4 },
-  settingsIcon: { fontSize: 18, color: t.textTertiary },
 
   // Settings modal
   settingsBackdrop: {
@@ -284,15 +323,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: t.border,
     padding: 4,
-    minWidth: 200,
+    minWidth: 180,
   },
-  settingsEmail: {
-    fontSize: 12,
+  settingsMenuEmail: {
+    fontSize: 11,
     color: t.textSecondary,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   settingsDivider: { height: 1, backgroundColor: t.borderLight, marginVertical: 2 },
-  settingsItem: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 6 },
-  logoutText: { fontSize: 13, color: t.red, fontWeight: '500' },
+  settingsMenuItem: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6 },
+  logoutText: { fontSize: 12, color: t.red, fontWeight: '500' },
 });
+
+export { SIDEBAR_WIDTH };

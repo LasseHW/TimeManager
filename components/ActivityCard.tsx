@@ -224,7 +224,7 @@ export function ActivityCard({
       {expanded && (
         <View style={styles.entriesSection}>
           {entries.length === 0 && (
-            <Text style={styles.noEntries}>Keine Eintr\u00E4ge</Text>
+            <Text style={styles.noEntries}>Keine Einträge</Text>
           )}
           {entries.map((e, i) => {
             const isHovered = hoveredEntry === e.id;
@@ -259,7 +259,7 @@ export function ActivityCard({
                     }}
                   >
                     <Text style={styles.entryDesc} numberOfLines={1}>
-                      {e.description || 'Beschreibung hinzuf\u00FCgen...'}
+                      {e.description || 'Beschreibung hinzufügen...'}
                     </Text>
                   </Pressable>
                 )}
@@ -270,7 +270,7 @@ export function ActivityCard({
                 {/* Delete (hover) */}
                 {isHovered && (
                   <Pressable style={styles.entryDeleteBtn} onPress={() => onDeleteEntry(e.id)}>
-                    <Text style={styles.entryDeleteIcon}>\u00D7</Text>
+                    <Text style={styles.entryDeleteIcon}>{'×'}</Text>
                   </Pressable>
                 )}
               </View>
@@ -303,7 +303,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     gap: 8,
     backgroundColor: t.bg,
   },
@@ -329,9 +329,9 @@ const styles = StyleSheet.create({
   ctrlIcon: { fontSize: 10 },
   liveDot: { width: 6, height: 6, borderRadius: 3 },
   nameArea: { flex: 1 },
-  nameText: { fontSize: 14, fontWeight: '600', color: t.text },
+  nameText: { fontSize: 15, fontWeight: '600', color: t.text },
   nameInput: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
     color: t.text,
     padding: 2,
@@ -339,11 +339,11 @@ const styles = StyleSheet.create({
     borderBottomColor: t.accent,
   },
   timeText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: t.text,
     fontVariant: ['tabular-nums'],
-    minWidth: 60,
+    minWidth: 64,
     textAlign: 'right',
     fontFamily:
       Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
