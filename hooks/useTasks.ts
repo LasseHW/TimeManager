@@ -25,14 +25,15 @@ export function useTasks() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const addTask = useCallback(async (projectId: string, name: string) => {
-    if (!session) return;
-    await supabase.from('tasks').insert({
-      user_id: session.user.id,
-      project_id: projectId,
-      name,
-    });
+  const addTask = useCallback(async (projectId: string, name: string): Promise<string | null> => {
+    if (!session) return null;
+    const { data } = await supabase
+      .from('tasks')
+      .insert({ user_id: session.user.id, project_id: projectId, name })
+      .select('id')
+      .single();
     await refresh();
+    return data?.id ?? null;
   }, [session, refresh]);
 
   const updateTask = useCallback(async (id: string, name: string) => {

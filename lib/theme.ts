@@ -1,25 +1,31 @@
 export const t = {
   // Backgrounds
-  bg: '#F8F9FA',
+  bg: '#F5F5F5',
   card: '#FFFFFF',
-  cardHover: '#F3F4F6',
+  cardHover: '#F9F9F9',
+
+  // Sidebar
+  sidebar: '#FFFFFF',
+  sidebarBorder: '#E0E0E0',
+  sidebarHover: '#F3F4F6',
+  sidebarActive: '#EFF6FF',
 
   // Text
-  text: '#111827',
+  text: '#1A1A1A',
   textSecondary: '#6B7280',
   textTertiary: '#9CA3AF',
   textPlaceholder: '#D1D5DB',
 
-  // Accent
-  accent: '#6366F1',
-  accentLight: '#EEF2FF',
-  accentBorder: '#C7D2FE',
+  // Accent (Timing blue)
+  accent: '#2563EB',
+  accentLight: '#EFF6FF',
+  accentBorder: '#BFDBFE',
 
   // Borders & Shadows
-  border: '#E5E7EB',
+  border: '#E8E8E8',
   borderLight: '#F3F4F6',
-  shadow: 'rgba(0,0,0,0.08)',
-  shadowMd: 'rgba(0,0,0,0.12)',
+  shadow: 'rgba(0,0,0,0.06)',
+  shadowMd: 'rgba(0,0,0,0.1)',
 
   // Status
   green: '#22C55E',
@@ -31,16 +37,23 @@ export const t = {
   redBg: '#FEF2F2',
 
   // Radii
-  radiusCard: 12,
-  radiusInput: 8,
+  radiusCard: 8,
+  radiusInput: 6,
   radiusChip: 999,
+
+  // Active / running state
+  activeBorder: '#2563EB',
+  activeBg: '#EFF6FF',
+
+  // Alternating row
+  rowAlt: '#F9F9F9',
 
   // Card shadow (RN compatible)
   cardShadow: {
     shadowColor: '#000' as const,
     shadowOffset: { width: 0, height: 1 } as const,
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowOpacity: 0.06,
+    shadowRadius: 2,
+    elevation: 1,
   },
 };
