@@ -186,7 +186,7 @@ export function Sidebar({
   );
 }
 
-const SIDEBAR_WIDTH = 220;
+const SIDEBAR_WIDTH = 580;
 
 const styles = StyleSheet.create({
   container: {

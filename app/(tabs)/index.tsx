@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  Dimensions,
+  Easing,
   Platform,
   Pressable,
   ScrollView,
@@ -9,6 +9,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTimer } from '../../hooks/useTimer';
@@ -24,18 +25,14 @@ import { ProjectFormModal } from '../../components/ProjectFormModal';
 import ReportsScreen from './reports';
 import { t } from '../../lib/theme';
 
-// ── Helpers ──────────────────────────────────────────
+// ── Constants ────────────────────────────────────────
 
 const MOBILE_BREAK = 768;
+const TOGGLE_W = 24;
+const ANIM_DURATION = 250;
+const ANIM_EASING = Easing.out(Easing.cubic);
 
-function useWindowWidth() {
-  const [width, setWidth] = useState(Dimensions.get('window').width);
-  useEffect(() => {
-    const sub = Dimensions.addEventListener('change', ({ window }) => setWidth(window.width));
-    return () => sub.remove();
-  }, []);
-  return width;
-}
+// ── Helpers ──────────────────────────────────────────
 
 function fmtMs(ms: number) {
   if (ms <= 0) return '0m';
@@ -92,8 +89,8 @@ function useKeyboardShortcuts(
 
 export default function TimerScreen() {
   const insets = useSafeAreaInsets();
-  const windowWidth = useWindowWidth();
-  const isMobile = windowWidth < MOBILE_BREAK;
+  const { width: windowWidth } = useWindowDimensions();
+  const isDesktop = windowWidth >= MOBILE_BREAK;
 
   // Hooks
   const { session } = useAuth();
@@ -104,24 +101,44 @@ export default function TimerScreen() {
 
   // State
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true); // desktop: open by default
   const [activeTab, setActiveTab] = useState<'timer' | 'reports'>('timer');
   const [newActivityName, setNewActivityName] = useState('');
   const [showProjectForm, setShowProjectForm] = useState(false);
   const [editProject, setEditProject] = useState<Project | null>(null);
   const [manualEntryTask, setManualEntryTask] = useState<{ taskId: string; projectId: string } | null>(null);
 
-  // Animated drawer for mobile
-  const drawerAnim = useRef(new Animated.Value(0)).current;
+  // Close sidebar on mobile when switching to mobile breakpoint
   useEffect(() => {
-    if (isMobile) {
-      Animated.timing(drawerAnim, {
+    if (!isDesktop) setSidebarOpen(false);
+    else setSidebarOpen(true);
+  }, [isDesktop]);
+
+  // ── Desktop sidebar animation (width: 0 ↔ SIDEBAR_WIDTH) ──
+  const desktopAnim = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (isDesktop) {
+      Animated.timing(desktopAnim, {
         toValue: sidebarOpen ? 1 : 0,
-        duration: 220,
+        duration: ANIM_DURATION,
+        easing: ANIM_EASING,
+        useNativeDriver: false, // animating width, can't use native
+      }).start();
+    }
+  }, [sidebarOpen, isDesktop, desktopAnim]);
+
+  // ── Mobile drawer animation (translateX: -280 → 0) ──
+  const mobileAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!isDesktop) {
+      Animated.timing(mobileAnim, {
+        toValue: sidebarOpen ? 1 : 0,
+        duration: ANIM_DURATION,
+        easing: ANIM_EASING,
         useNativeDriver: true,
       }).start();
     }
-  }, [sidebarOpen, isMobile, drawerAnim]);
+  }, [sidebarOpen, isDesktop, mobileAnim]);
 
   // Keyboard shortcuts
   useKeyboardShortcuts(
@@ -133,7 +150,6 @@ export default function TimerScreen() {
 
   // ── Computed ───────────────────────────────────────
 
-  // Per-project totals (today)
   const projectTotals = useMemo(() => {
     const map = new Map<string, number>();
     for (const e of entries) {
@@ -148,7 +164,6 @@ export default function TimerScreen() {
     return map;
   }, [entries, timer.running, timer.elapsed, timer.status]);
 
-  // Entries grouped by task
   const entriesByTask = useMemo(() => {
     const map = new Map<string, TodayEntry[]>();
     for (const e of entries) {
@@ -159,13 +174,11 @@ export default function TimerScreen() {
     return map;
   }, [entries]);
 
-  // Tasks to display
   const displayTasks = useMemo(() => {
     if (selectedProjectId) return tasksForProject(selectedProjectId);
     return tasks;
   }, [selectedProjectId, tasks, tasksForProject]);
 
-  // Historical entries (grouped by date)
   const groupedEntries = useMemo(() => {
     const filtered = selectedProjectId
       ? entries.filter((e) => e.project?.id === selectedProjectId)
@@ -235,14 +248,14 @@ export default function TimerScreen() {
     ? projects.find((p) => p.id === selectedProjectId)
     : null;
 
-  const sidebarContent = (
+  const sidebarElement = (
     <Sidebar
       projects={projects}
       selectedProjectId={selectedProjectId}
       onSelectProject={(id) => {
         setSelectedProjectId(id);
         setActiveTab('timer');
-        if (isMobile) setSidebarOpen(false);
+        if (!isDesktop) setSidebarOpen(false);
       }}
       projectTotals={projectTotals}
       totalTodayMs={liveTotalMs}
@@ -257,45 +270,76 @@ export default function TimerScreen() {
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* ── Desktop sidebar ── */}
-      {!isMobile && sidebarContent}
 
-      {/* ── Mobile drawer ── */}
-      {isMobile && sidebarOpen && (
+      {/* ════════ DESKTOP: animated sidebar + toggle strip ════════ */}
+      {isDesktop && (
+        <View style={styles.desktopSidebarWrap}>
+          {/* Animated width container that clips the sidebar */}
+          <Animated.View
+            style={[
+              styles.desktopSidebarClip,
+              {
+                width: desktopAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, SIDEBAR_WIDTH],
+                }),
+              },
+            ]}
+          >
+            {/* Sidebar always renders at full 280px; clip hides it */}
+            <View style={styles.desktopSidebarInner}>
+              {sidebarElement}
+            </View>
+          </Animated.View>
+
+          {/* Toggle strip – always visible */}
+          <Pressable
+            style={styles.toggleStrip}
+            onPress={() => setSidebarOpen((prev) => !prev)}
+          >
+            <Text style={styles.toggleIcon}>{sidebarOpen ? '\u25C0' : '\u25B6'}</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* ════════ MOBILE: drawer overlay ════════ */}
+      {!isDesktop && sidebarOpen && (
         <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          {/* Backdrop */}
           <Animated.View
             style={[
               StyleSheet.absoluteFill,
-              { backgroundColor: 'rgba(0,0,0,0.3)', opacity: drawerAnim },
+              { backgroundColor: '#00000066', opacity: mobileAnim },
             ]}
           >
             <Pressable style={StyleSheet.absoluteFill} onPress={() => setSidebarOpen(false)} />
           </Animated.View>
+
+          {/* Drawer */}
           <Animated.View
             style={[
-              styles.drawer,
+              styles.mobileDrawer,
               {
-                transform: [
-                  {
-                    translateX: drawerAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-SIDEBAR_WIDTH, 0],
-                    }),
-                  },
-                ],
+                transform: [{
+                  translateX: mobileAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-SIDEBAR_WIDTH, 0],
+                  }),
+                }],
               },
             ]}
           >
-            {sidebarContent}
+            {sidebarElement}
           </Animated.View>
         </View>
       )}
 
-      {/* ── Main panel ── */}
+      {/* ════════ MAIN PANEL ════════ */}
       <View style={styles.main}>
-        {/* Top bar (mobile hamburger + title) */}
+        {/* Top bar */}
         <View style={styles.topBar}>
-          {isMobile && (
+          {/* Mobile hamburger */}
+          {!isDesktop && (
             <Pressable style={styles.hamburger} onPress={() => setSidebarOpen(true)}>
               <Text style={styles.hamburgerIcon}>{'\u2630'}</Text>
             </Pressable>
@@ -311,13 +355,13 @@ export default function TimerScreen() {
           )}
         </View>
 
-        {/* ── Reports tab ── */}
+        {/* Reports tab */}
         {activeTab === 'reports' && <ReportsScreen />}
 
-        {/* ── Timer tab ── */}
+        {/* Timer tab */}
         {activeTab === 'timer' && (
         <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-          {/* ── New activity input ── */}
+          {/* New activity input */}
           {selectedProjectId && (
             <View style={styles.newActivityRow}>
               <TextInput
@@ -339,7 +383,7 @@ export default function TimerScreen() {
             </View>
           )}
 
-          {/* ── Activity cards ── */}
+          {/* Activity cards */}
           {displayTasks.length > 0 && (
             <View style={styles.cardsSection}>
               <Text style={styles.sectionLabel}>AKTIVITÄTEN</Text>
@@ -376,7 +420,7 @@ export default function TimerScreen() {
             </View>
           )}
 
-          {/* Empty state (no tasks for selected project) */}
+          {/* Empty: no tasks */}
           {displayTasks.length === 0 && selectedProjectId && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>{'\u25C6'}</Text>
@@ -388,7 +432,7 @@ export default function TimerScreen() {
             </View>
           )}
 
-          {/* Empty state (no projects at all) */}
+          {/* Empty: no projects */}
           {projects.length === 0 && (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>{'\u25C6'}</Text>
@@ -403,7 +447,7 @@ export default function TimerScreen() {
             </View>
           )}
 
-          {/* ── Historical entries ── */}
+          {/* Historical entries */}
           {groupedEntries.length > 0 && (
             <View style={styles.historySection}>
               <Text style={styles.sectionLabel}>ZEITEINTRÄGE</Text>
@@ -477,8 +521,32 @@ const styles = StyleSheet.create({
     backgroundColor: t.bg,
   },
 
-  // Drawer (mobile)
-  drawer: {
+  // ── Desktop sidebar ──
+  desktopSidebarWrap: {
+    flexDirection: 'row',
+  },
+  desktopSidebarClip: {
+    overflow: 'hidden',
+  },
+  desktopSidebarInner: {
+    width: SIDEBAR_WIDTH,
+    height: '100%',
+  },
+  toggleStrip: {
+    width: TOGGLE_W,
+    backgroundColor: t.card,
+    borderRightWidth: 1,
+    borderRightColor: t.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  toggleIcon: {
+    fontSize: 10,
+    color: t.textTertiary,
+  },
+
+  // ── Mobile drawer ──
+  mobileDrawer: {
     position: 'absolute',
     top: 0,
     left: 0,
@@ -487,7 +555,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
 
-  // Main panel
+  // ── Main panel ──
   main: { flex: 1 },
   topBar: {
     flexDirection: 'row',
@@ -525,11 +593,11 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
   },
 
-  // Scroll
+  // ── Scroll ──
   scrollArea: { flex: 1 },
   scrollContent: { padding: 24, paddingBottom: 40 },
 
-  // New activity
+  // ── New activity ──
   newActivityRow: { marginBottom: 20 },
   newActivityInput: {
     fontSize: 16,
@@ -545,7 +613,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
 
-  // Cards section
+  // ── Cards ──
   cardsSection: { marginBottom: 24 },
   sectionLabel: {
     fontSize: 11,
@@ -556,7 +624,7 @@ const styles = StyleSheet.create({
   },
   cardsList: { gap: 8 },
 
-  // Empty
+  // ── Empty ──
   emptyState: { alignItems: 'center', paddingTop: 48, paddingBottom: 32 },
   emptyIcon: { fontSize: 36, color: t.textPlaceholder, marginBottom: 12 },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: t.textSecondary },
@@ -576,7 +644,7 @@ const styles = StyleSheet.create({
   },
   emptyBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 
-  // History
+  // ── History ──
   historySection: { marginTop: 8 },
   historyGroup: { marginBottom: 16 },
   historyDate: {
