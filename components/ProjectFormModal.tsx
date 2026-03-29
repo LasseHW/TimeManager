@@ -30,8 +30,9 @@ export function ProjectFormModal({ visible, project, onSave, onClose }: Props) {
 
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <View style={[styles.card, t.cardShadow]} onStartShouldSetResponder={() => true}>
+      <View style={styles.backdrop}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View style={[styles.card, t.cardShadow]}>
           <Text style={styles.title}>{project ? 'Projekt bearbeiten' : 'Neues Projekt'}</Text>
 
           <TextInput
@@ -73,7 +74,7 @@ export function ProjectFormModal({ visible, project, onSave, onClose }: Props) {
             </Pressable>
           </View>
         </View>
-      </Pressable>
+      </View>
     </Modal>
   );
 }

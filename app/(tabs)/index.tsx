@@ -1,38 +1,69 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Modal,
+  Animated,
+  Dimensions,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTimer } from '../../hooks/useTimer';
-import { useTodayEntries } from '../../hooks/useTodayEntries';
+import { useTodayEntries, type TodayEntry } from '../../hooks/useTodayEntries';
 import { useTasks } from '../../hooks/useTasks';
-import { useProjects } from '../../contexts/ProjectsContext';
-import { DailyProgressBar } from '../../components/DailyProgressBar';
-import { ProjectCard } from '../../components/ProjectCard';
-import { TodayTimeline } from '../../components/TodayTimeline';
+import { useProjects, type Project } from '../../contexts/ProjectsContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
+import { Sidebar } from '../../components/Sidebar';
+import { ActivityCard } from '../../components/ActivityCard';
+import { ManualEntryModal } from '../../components/ManualEntryModal';
+import { ProjectFormModal } from '../../components/ProjectFormModal';
 import { t } from '../../lib/theme';
 
 // ── Helpers ──────────────────────────────────────────
 
-function formatTime(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+const SIDEBAR_W = 280;
+const MOBILE_BREAK = 768;
+
+function useWindowWidth() {
+  const [width, setWidth] = useState(Dimensions.get('window').width);
+  useEffect(() => {
+    const sub = Dimensions.addEventListener('change', ({ window }) => setWidth(window.width));
+    return () => sub.remove();
+  }, []);
+  return width;
 }
 
-// ── Keyboard shortcuts (web only) ─────────────────────
+function fmtMs(ms: number) {
+  if (ms <= 0) return '0m';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function fmtTime(iso: string) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function fmtDateHeader(iso: string) {
+  const d = new Date(iso);
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getFullYear()).slice(2)}`;
+}
+
+function entryDurationMs(e: TodayEntry) {
+  if (!e.end_time) return 0;
+  return new Date(e.end_time).getTime() - new Date(e.start_time).getTime() - (e.paused_duration ?? 0) * 1000;
+}
+
+// ── Keyboard shortcuts (web) ─────────────────────────
 
 function useKeyboardShortcuts(
   status: string,
-  modalOpen: boolean,
-  onStart: () => void,
   onPause: () => void,
   onResume: () => void,
   onStop: () => void,
@@ -40,13 +71,11 @@ function useKeyboardShortcuts(
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     function handler(e: KeyboardEvent) {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
-      // Don't handle shortcuts while modal is open (modal has its own handler)
-      if (modalOpen) return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.code === 'Space') {
         e.preventDefault();
-        if (status === 'idle') onStart();
-        else if (status === 'running') onPause();
+        if (status === 'running') onPause();
         else if (status === 'paused') onResume();
       }
       if (e.code === 'Escape' && status !== 'idle') {
@@ -56,318 +85,531 @@ function useKeyboardShortcuts(
     }
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [status, modalOpen, onStart, onPause, onResume, onStop]);
+  }, [status, onPause, onResume, onStop]);
 }
 
-// ── New entry form modal ──────────────────────────────
-
-function NewEntryModal({
-  visible,
-  projects,
-  onStart,
-  onClose,
-}: {
-  visible: boolean;
-  projects: { id: string; name: string; color: string }[];
-  onStart: (projectId: string) => void;
-  onClose: () => void;
-}) {
-  // Keyboard nav: number keys 1-9 select project, Escape closes
-  useEffect(() => {
-    if (!visible || Platform.OS !== 'web') return;
-    function handler(e: KeyboardEvent) {
-      if (e.code === 'Escape') { e.preventDefault(); onClose(); return; }
-      const num = parseInt(e.key, 10);
-      if (num >= 1 && num <= projects.length) {
-        e.preventDefault();
-        onStart(projects[num - 1].id);
-      }
-    }
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [visible, projects, onStart, onClose]);
-
-  return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={styles.modalBackdrop}>
-        {/* Backdrop: absolute-fill catches clicks outside the card */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        {/* Card: normal flow, sits on top of the backdrop */}
-        <View style={[styles.modalCard, t.cardShadow]}>
-          <Text style={styles.modalTitle}>Projekt wählen</Text>
-          {projects.map((p, i) => (
-            <Pressable key={p.id} style={styles.modalOption} onPress={() => onStart(p.id)}>
-              <View style={[styles.modalDot, { backgroundColor: p.color }]} />
-              <Text style={styles.modalOptionText}>{p.name}</Text>
-              {Platform.OS === 'web' && (
-                <Text style={styles.modalShortcut}>{i + 1}</Text>
-              )}
-            </Pressable>
-          ))}
-          {projects.length === 0 && (
-            <Text style={styles.modalEmpty}>Erstelle zuerst ein Projekt im Projekte-Tab.</Text>
-          )}
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-// ── Main screen ───────────────────────────────────────
+// ── Main screen ──────────────────────────────────────
 
 export default function TimerScreen() {
+  const insets = useSafeAreaInsets();
+  const windowWidth = useWindowWidth();
+  const isMobile = windowWidth < MOBILE_BREAK;
+
+  // Hooks
+  const { session } = useAuth();
   const timer = useTimer();
   const { entries, refresh: refreshEntries, totalTodayMs, taskTotals } = useTodayEntries();
-  const { projects } = useProjects();
-  const { tasks, tasksForProject, addTask, updateTask, deleteTask, refresh: refreshTasks } = useTasks();
+  const { projects, addProject, updateProject, deleteProject } = useProjects();
+  const { tasks, tasksForProject, addTask, updateTask, deleteTask } = useTasks();
 
-  const [showNewEntry, setShowNewEntry] = useState(false);
-  // Track last started project/task so Space can quick-restart
-  const [lastStart, setLastStart] = useState<{ projectId: string; taskId?: string } | null>(null);
+  // State
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [newActivityName, setNewActivityName] = useState('');
+  const [showProjectForm, setShowProjectForm] = useState(false);
+  const [editProject, setEditProject] = useState<Project | null>(null);
+  const [manualEntryTask, setManualEntryTask] = useState<{ taskId: string; projectId: string } | null>(null);
 
-  // Running project info
-  const runningProject = timer.running
-    ? projects.find((p) => p.id === timer.running?.projectId)
-    : null;
+  // Animated drawer for mobile
+  const drawerAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (isMobile) {
+      Animated.timing(drawerAnim, {
+        toValue: sidebarOpen ? 1 : 0,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [sidebarOpen, isMobile, drawerAnim]);
 
-  // Keyboard shortcuts: space = play/pause, esc = stop
+  // Keyboard shortcuts
   useKeyboardShortcuts(
     timer.status,
-    showNewEntry,
-    () => {
-      if (projects.length === 0) return;
-      // Quick-restart last project/task, or only project — skip modal
-      if (lastStart && projects.some((p) => p.id === lastStart.projectId)) {
-        timer.start(lastStart);
-      } else if (projects.length === 1) {
-        timer.start({ projectId: projects[0].id });
-      } else {
-        setShowNewEntry(true);
-      }
-    },
     timer.pause,
     timer.resume,
-    async () => { await timer.stop(); await refreshEntries(); },
+    async () => { await timer.stop(); refreshEntries(); },
   );
 
+  // ── Computed ───────────────────────────────────────
+
+  // Per-project totals (today)
+  const projectTotals = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const e of entries) {
+      if (!e.project || !e.end_time) continue;
+      const ms = entryDurationMs(e);
+      map.set(e.project.id, (map.get(e.project.id) ?? 0) + ms);
+    }
+    if (timer.running?.projectId && timer.status !== 'idle') {
+      const pid = timer.running.projectId;
+      map.set(pid, (map.get(pid) ?? 0) + timer.elapsed);
+    }
+    return map;
+  }, [entries, timer.running, timer.elapsed, timer.status]);
+
+  // Entries grouped by task
+  const entriesByTask = useMemo(() => {
+    const map = new Map<string, TodayEntry[]>();
+    for (const e of entries) {
+      if (!e.task_id) continue;
+      if (!map.has(e.task_id)) map.set(e.task_id, []);
+      map.get(e.task_id)!.push(e);
+    }
+    return map;
+  }, [entries]);
+
+  // Tasks to display
+  const displayTasks = useMemo(() => {
+    if (selectedProjectId) return tasksForProject(selectedProjectId);
+    return tasks;
+  }, [selectedProjectId, tasks, tasksForProject]);
+
+  // Historical entries (grouped by date)
+  const groupedEntries = useMemo(() => {
+    const filtered = selectedProjectId
+      ? entries.filter((e) => e.project?.id === selectedProjectId)
+      : entries;
+    const map = new Map<string, TodayEntry[]>();
+    for (const e of filtered) {
+      const dateKey = e.start_time.slice(0, 10);
+      if (!map.has(dateKey)) map.set(dateKey, []);
+      map.get(dateKey)!.push(e);
+    }
+    return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  }, [entries, selectedProjectId]);
+
+  const liveTotalMs = totalTodayMs + (timer.status !== 'idle' ? timer.elapsed : 0);
+
+  // ── Handlers ───────────────────────────────────────
+
+  async function handleNewActivity() {
+    const name = newActivityName.trim();
+    if (!name || !selectedProjectId) return;
+    const taskId = await addTask(selectedProjectId, name);
+    setNewActivityName('');
+    if (taskId) {
+      await timer.start({ projectId: selectedProjectId, taskId });
+    }
+  }
+
   async function handleStartTask(taskId: string, projectId: string) {
-    setLastStart({ projectId, taskId });
     await timer.start({ projectId, taskId });
   }
 
   async function handleStop() {
     await timer.stop();
-    await refreshEntries();
+    refreshEntries();
   }
 
-  function handleNewEntryStart(projectId: string) {
-    setShowNewEntry(false);
-    setLastStart({ projectId });
-    timer.start({ projectId });
+  async function handleUpdateEntryDesc(entryId: string, desc: string) {
+    await supabase.from('time_entries').update({ description: desc }).eq('id', entryId);
+    refreshEntries();
   }
 
-  // Calculate project totals from task totals + elapsed
-  function projectTotalMs(projectId: string): number {
-    let total = 0;
-    for (const task of tasksForProject(projectId)) {
-      total += taskTotals.get(task.id) ?? 0;
-    }
-    // Add running elapsed if it's this project
-    if (timer.running?.projectId === projectId) total += timer.elapsed;
-    return total;
+  async function handleDeleteEntry(entryId: string) {
+    await supabase.from('time_entries').delete().eq('id', entryId);
+    refreshEntries();
   }
 
-  const timerDisplay = timer.status !== 'idle' ? timer.elapsed : totalTodayMs;
-  const hasProjects = projects.length > 0;
+  async function handleSaveProject(name: string, color: string) {
+    if (editProject) await updateProject(editProject.id, name, color);
+    else await addProject(name, color);
+    setShowProjectForm(false);
+    setEditProject(null);
+  }
+
+  function openEditProject(project: Project) {
+    setEditProject(project);
+    setShowProjectForm(true);
+  }
+
+  function openAddProject() {
+    setEditProject(null);
+    setShowProjectForm(true);
+  }
+
+  // ── Render ─────────────────────────────────────────
+
+  const selectedProject = selectedProjectId
+    ? projects.find((p) => p.id === selectedProjectId)
+    : null;
+
+  const sidebarContent = (
+    <Sidebar
+      projects={projects}
+      selectedProjectId={selectedProjectId}
+      onSelectProject={(id) => {
+        setSelectedProjectId(id);
+        if (isMobile) setSidebarOpen(false);
+      }}
+      projectTotals={projectTotals}
+      totalTodayMs={liveTotalMs}
+      runningProjectId={timer.running?.projectId ?? null}
+      userEmail={session?.user.email ?? ''}
+      onAddProject={openAddProject}
+      onEditProject={openEditProject}
+    />
+  );
 
   return (
-    <View style={styles.container}>
-      {/* Daily progress */}
-      <DailyProgressBar totalMs={totalTodayMs + (timer.status !== 'idle' ? timer.elapsed : 0)} />
+    <View style={[styles.root, { paddingTop: insets.top }]}>
+      {/* ── Desktop sidebar ── */}
+      {!isMobile && sidebarContent}
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
-        {/* Timer display */}
-        <View style={styles.timerSection}>
-          <Text style={styles.timerText}>{formatTime(timerDisplay)}</Text>
+      {/* ── Mobile drawer ── */}
+      {isMobile && sidebarOpen && (
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          <Animated.View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: 'rgba(0,0,0,0.3)', opacity: drawerAnim },
+            ]}
+          >
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => setSidebarOpen(false)} />
+          </Animated.View>
+          <Animated.View
+            style={[
+              styles.drawer,
+              {
+                transform: [
+                  {
+                    translateX: drawerAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-SIDEBAR_W, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            {sidebarContent}
+          </Animated.View>
+        </View>
+      )}
 
-          {/* Running indicator */}
-          {timer.status !== 'idle' && runningProject && (
-            <View style={[styles.runningChip, { backgroundColor: runningProject.color + '18' }]}>
-              <View style={[styles.runningDot, { backgroundColor: runningProject.color }]} />
-              <Text style={[styles.runningLabel, { color: runningProject.color }]}>
-                {runningProject.name}
-              </Text>
-              <Text style={styles.runningStatus}>
-                {timer.status === 'running' ? 'Recording' : 'Paused'}
-              </Text>
-            </View>
-          )}
-
-          {/* Global start button (idle only) */}
-          {timer.status === 'idle' && (
-            <Pressable
-              style={styles.startButton}
-              onPress={() => setShowNewEntry(true)}
-            >
-              <Text style={styles.startButtonText}>+ Neuen Eintrag starten</Text>
+      {/* ── Main panel ── */}
+      <View style={styles.main}>
+        {/* Top bar (mobile hamburger + title) */}
+        <View style={styles.topBar}>
+          {isMobile && (
+            <Pressable style={styles.hamburger} onPress={() => setSidebarOpen(true)}>
+              <Text style={styles.hamburgerIcon}>{'\u2630'}</Text>
             </Pressable>
           )}
-
-          {/* Keyboard hint (web) */}
-          {Platform.OS === 'web' && (
-            <Text style={styles.shortcutHint}>
-              Space: {timer.status === 'idle'
-                ? (lastStart ? 'Fortsetzen' : 'Start')
-                : timer.status === 'running' ? 'Pause' : 'Resume'}
-              {timer.status !== 'idle' ? '  ·  Esc: Stop' : ''}
-            </Text>
+          <Text style={styles.topTitle}>
+            {selectedProject ? selectedProject.name : 'Alle Projekte'}
+          </Text>
+          {timer.status !== 'idle' && (
+            <View style={styles.topTimerChip}>
+              <View style={styles.topTimerDot} />
+              <Text style={styles.topTimerText}>{fmtMs(timer.elapsed)}</Text>
+            </View>
           )}
         </View>
 
-        {/* Project cards with tasks */}
-        {hasProjects && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>PROJEKTE</Text>
-            <View style={styles.projectList}>
-              {projects.map((project) => (
-                <ProjectCard
-                  key={project.id}
-                  project={project}
-                  tasks={tasksForProject(project.id)}
-                  runningTaskId={
-                    timer.running?.projectId === project.id ? timer.running.taskId : null
-                  }
-                  timerStatus={timer.status}
-                  elapsed={timer.elapsed}
-                  taskTotals={taskTotals}
-                  projectTotalMs={projectTotalMs(project.id)}
-                  onStartTask={(taskId) => handleStartTask(taskId, project.id)}
-                  onPause={timer.pause}
-                  onResume={timer.resume}
-                  onStop={handleStop}
-                  onAddTask={(name) => addTask(project.id, name)}
-                  onRenameTask={updateTask}
-                  onDeleteTask={deleteTask}
-                />
+        <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
+          {/* ── New activity input ── */}
+          {selectedProjectId && (
+            <View style={styles.newActivityRow}>
+              <TextInput
+                style={styles.newActivityInput}
+                placeholder="Neue Aktivit\u00E4t starten..."
+                placeholderTextColor={t.textPlaceholder}
+                value={newActivityName}
+                onChangeText={setNewActivityName}
+                onSubmitEditing={handleNewActivity}
+                returnKeyType="go"
+              />
+            </View>
+          )}
+          {!selectedProjectId && (
+            <View style={styles.newActivityRow}>
+              <Text style={styles.newActivityHint}>
+                W\u00E4hle ein Projekt in der Sidebar, um eine Aktivit\u00E4t zu starten.
+              </Text>
+            </View>
+          )}
+
+          {/* ── Activity cards ── */}
+          {displayTasks.length > 0 && (
+            <View style={styles.cardsSection}>
+              <Text style={styles.sectionLabel}>AKTIVIT\u00C4TEN</Text>
+              <View style={styles.cardsList}>
+                {displayTasks.map((task) => {
+                  const isRunning =
+                    timer.running?.taskId === task.id && timer.status !== 'idle';
+                  const project = projects.find((p) => p.id === task.project_id);
+                  return (
+                    <ActivityCard
+                      key={task.id}
+                      task={task}
+                      projectColor={project?.color ?? t.textTertiary}
+                      entries={entriesByTask.get(task.id) ?? []}
+                      isRunning={isRunning}
+                      timerStatus={timer.status}
+                      elapsed={isRunning ? timer.elapsed : 0}
+                      totalMs={taskTotals.get(task.id) ?? 0}
+                      onStart={() => handleStartTask(task.id, task.project_id)}
+                      onPause={timer.pause}
+                      onResume={timer.resume}
+                      onStop={handleStop}
+                      onRenameTask={(name) => updateTask(task.id, name)}
+                      onDeleteTask={() => deleteTask(task.id)}
+                      onUpdateEntryDesc={handleUpdateEntryDesc}
+                      onDeleteEntry={handleDeleteEntry}
+                      onAddManualEntry={() =>
+                        setManualEntryTask({ taskId: task.id, projectId: task.project_id })
+                      }
+                    />
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {/* Empty state (no tasks for selected project) */}
+          {displayTasks.length === 0 && selectedProjectId && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyIcon}>{'\u25C6'}</Text>
+              <Text style={styles.emptyTitle}>Keine Aktivit\u00E4ten</Text>
+              <Text style={styles.emptyHint}>
+                Gib oben einen Namen ein und dr\u00FCcke Enter,{'\n'}um eine neue Aktivit\u00E4t
+                zu starten.
+              </Text>
+            </View>
+          )}
+
+          {/* Empty state (no projects at all) */}
+          {projects.length === 0 && (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyIcon}>{'\u25C6'}</Text>
+              <Text style={styles.emptyTitle}>Willkommen bei TimeManager</Text>
+              <Text style={styles.emptyHint}>
+                Erstelle dein erstes Projekt in der Sidebar,{'\n'}um mit der Zeiterfassung zu
+                beginnen.
+              </Text>
+              <Pressable style={styles.emptyBtn} onPress={openAddProject}>
+                <Text style={styles.emptyBtnText}>+ Projekt erstellen</Text>
+              </Pressable>
+            </View>
+          )}
+
+          {/* ── Historical entries ── */}
+          {groupedEntries.length > 0 && (
+            <View style={styles.historySection}>
+              <Text style={styles.sectionLabel}>ZEITEINTR\u00C4GE</Text>
+              {groupedEntries.map(([dateKey, dayEntries]) => (
+                <View key={dateKey} style={styles.historyGroup}>
+                  <Text style={styles.historyDate}>{fmtDateHeader(dateKey)}</Text>
+                  {dayEntries.map((e, i) => (
+                    <View
+                      key={e.id}
+                      style={[styles.historyRow, i % 2 === 1 && styles.historyRowAlt]}
+                    >
+                      <Text style={styles.historyTime}>
+                        {fmtTime(e.start_time)} {'\u2192'}{' '}
+                        {e.end_time ? fmtTime(e.end_time) : '...'}
+                      </Text>
+                      <Text style={styles.historyDuration}>{fmtMs(entryDurationMs(e))}</Text>
+                      {e.project && (
+                        <View style={[styles.historyChip, { backgroundColor: e.project.color + '18' }]}>
+                          <View style={[styles.historyChipDot, { backgroundColor: e.project.color }]} />
+                          <Text
+                            style={[styles.historyChipText, { color: e.project.color }]}
+                            numberOfLines={1}
+                          >
+                            {e.project.name}
+                          </Text>
+                        </View>
+                      )}
+                      <Text style={styles.historyDesc} numberOfLines={1}>
+                        {e.description || ''}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               ))}
             </View>
-          </View>
-        )}
+          )}
+        </ScrollView>
+      </View>
 
-        {/* Empty state */}
-        {!hasProjects && (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyIcon}>◆</Text>
-            <Text style={styles.emptyTitle}>Keine Projekte vorhanden</Text>
-            <Text style={styles.emptyHint}>
-              Erstelle dein erstes Projekt im Projekte-Tab,{'\n'}
-              um Zeiten zu erfassen.
-            </Text>
-          </View>
-        )}
-
-        {/* Today timeline */}
-        <TodayTimeline entries={entries} />
-      </ScrollView>
-
-      {/* New entry modal */}
-      <NewEntryModal
-        visible={showNewEntry}
-        projects={projects}
-        onStart={handleNewEntryStart}
-        onClose={() => setShowNewEntry(false)}
+      {/* ── Modals ── */}
+      <ProjectFormModal
+        visible={showProjectForm}
+        project={editProject}
+        onSave={handleSaveProject}
+        onClose={() => {
+          setShowProjectForm(false);
+          setEditProject(null);
+        }}
       />
+
+      {manualEntryTask && (
+        <ManualEntryModal
+          visible
+          taskId={manualEntryTask.taskId}
+          projectId={manualEntryTask.projectId}
+          onClose={() => setManualEntryTask(null)}
+          onSaved={() => refreshEntries()}
+        />
+      )}
     </View>
   );
 }
 
-// ── Styles ────────────────────────────────────────────
+// ── Styles ───────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: t.bg },
-  scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 32 },
+  root: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: t.bg,
+  },
 
-  // Timer
-  timerSection: {
+  // Drawer (mobile)
+  drawer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    bottom: 0,
+    width: SIDEBAR_W,
+    zIndex: 10,
+  },
+
+  // Main panel
+  main: { flex: 1 },
+  topBar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: 32,
-    paddingBottom: 24,
     paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: t.card,
+    borderBottomWidth: 1,
+    borderBottomColor: t.border,
+    gap: 10,
   },
-  timerText: {
-    fontSize: 72,
-    fontWeight: '200',
-    color: t.text,
-    fontVariant: ['tabular-nums'],
-    letterSpacing: 4,
-    fontFamily: Platform.OS === 'web' ? 'ui-monospace, "SF Mono", "Cascadia Code", monospace' : undefined,
-  },
-  runningChip: {
+  hamburger: { padding: 4 },
+  hamburgerIcon: { fontSize: 20, color: t.text },
+  topTitle: { fontSize: 16, fontWeight: '600', color: t.text, flex: 1 },
+  topTimerChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
+    backgroundColor: t.accentLight,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: t.radiusChip,
-    marginTop: 10,
   },
-  runningDot: { width: 6, height: 6, borderRadius: 3 },
-  runningLabel: { fontSize: 12, fontWeight: '600' },
-  runningStatus: { fontSize: 11, color: t.textTertiary, marginLeft: 4 },
-  startButton: {
-    marginTop: 16,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: t.radiusChip,
-    backgroundColor: t.accent,
-    ...t.cardShadow,
-    shadowColor: t.accent,
-    shadowOpacity: 0.2,
+  topTimerDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: t.green,
   },
-  startButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  shortcutHint: {
-    marginTop: 12,
-    fontSize: 11,
-    color: t.textPlaceholder,
-    letterSpacing: 0.3,
+  topTimerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: t.accent,
+    fontVariant: ['tabular-nums'],
+    fontFamily: Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
   },
 
-  // Sections
-  section: { paddingHorizontal: 16, marginTop: 4 },
-  sectionTitle: {
-    fontSize: 11, fontWeight: '700', color: t.textTertiary,
-    letterSpacing: 1.5, marginBottom: 10, paddingHorizontal: 4,
+  // Scroll
+  scrollArea: { flex: 1 },
+  scrollContent: { padding: 20, paddingBottom: 40 },
+
+  // New activity
+  newActivityRow: { marginBottom: 20 },
+  newActivityInput: {
+    fontSize: 18,
+    color: t.text,
+    fontWeight: '400',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: t.borderLight,
   },
-  projectList: { gap: 10 },
+  newActivityHint: {
+    fontSize: 14,
+    color: t.textPlaceholder,
+    paddingVertical: 10,
+  },
+
+  // Cards section
+  cardsSection: { marginBottom: 24 },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: t.textTertiary,
+    letterSpacing: 1.5,
+    marginBottom: 10,
+  },
+  cardsList: { gap: 8 },
 
   // Empty
   emptyState: { alignItems: 'center', paddingTop: 48, paddingBottom: 32 },
-  emptyIcon: { fontSize: 40, color: t.textPlaceholder, marginBottom: 12 },
+  emptyIcon: { fontSize: 36, color: t.textPlaceholder, marginBottom: 12 },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: t.textSecondary },
-  emptyHint: { fontSize: 13, color: t.textTertiary, textAlign: 'center', marginTop: 4, lineHeight: 20 },
+  emptyHint: {
+    fontSize: 13,
+    color: t.textTertiary,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 20,
+  },
+  emptyBtn: {
+    marginTop: 16,
+    backgroundColor: t.accent,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: t.radiusInput,
+  },
+  emptyBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
 
-  // Modal
-  modalBackdrop: {
-    flex: 1, justifyContent: 'center', alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)', padding: 24,
+  // History
+  historySection: { marginTop: 8 },
+  historyGroup: { marginBottom: 16 },
+  historyDate: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: t.accent,
+    marginBottom: 6,
+    paddingHorizontal: 2,
   },
-  modalCard: {
-    backgroundColor: t.card, borderRadius: t.radiusCard,
-    borderWidth: 1, borderColor: t.border, padding: 20,
-    width: '100%', maxWidth: 360,
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    gap: 10,
+    borderRadius: 4,
   },
-  modalTitle: { fontSize: 15, fontWeight: '600', color: t.text, marginBottom: 14 },
-  modalOption: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8,
+  historyRowAlt: { backgroundColor: t.rowAlt },
+  historyTime: {
+    fontSize: 12,
+    color: t.textTertiary,
+    fontVariant: ['tabular-nums'],
+    width: 100,
+    fontFamily: Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
   },
-  modalDot: { width: 8, height: 8, borderRadius: 4 },
-  modalOptionText: { fontSize: 14, color: t.text, flex: 1 },
-  modalShortcut: {
-    fontSize: 11, fontWeight: '600', color: t.textTertiary,
-    backgroundColor: t.bg, paddingHorizontal: 6, paddingVertical: 2,
-    borderRadius: 4, overflow: 'hidden',
+  historyDuration: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: t.textSecondary,
+    fontVariant: ['tabular-nums'],
+    width: 50,
+    fontFamily: Platform.OS === 'web' ? 'ui-monospace, monospace' : undefined,
   },
-  modalEmpty: { fontSize: 13, color: t.textTertiary, paddingVertical: 12 },
+  historyChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: t.radiusChip,
+    maxWidth: 120,
+  },
+  historyChipDot: { width: 5, height: 5, borderRadius: 2.5 },
+  historyChipText: { fontSize: 10, fontWeight: '600' },
+  historyDesc: { flex: 1, fontSize: 13, color: t.text },
 });
